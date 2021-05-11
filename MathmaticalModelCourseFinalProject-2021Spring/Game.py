@@ -8,22 +8,15 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import os
+import time
 
 '''
+Search:ygjAStar
 Q1:leastDotsStrategy
 Q2:leastDistanceStrategy
 Q3:maxSCStrategy
 '''
-
-
-def euclidDistance(currentPos, targetPos):
-    """
-    求两个位置坐标的欧式距离
-    :param currentPos: 当前坐标
-    :param targetPos: 目标坐标
-    :return: 欧氏距离(float)
-    """
-    return np.sqrt(np.sum(np.square(currentPos - targetPos)))
 
 
 class Dot:
@@ -43,7 +36,6 @@ class Dot:
         self.x, self.y, self.z = self.position
         self.isFood = bool(food)
         self.isBonfire = not bool(food)
-        self.isArrived = False
         self.supply = supply
 
     def __eq__(self, other):
@@ -62,18 +54,6 @@ class Dot:
         elif self.isBonfire:
             print('Dot', self.index, ' Position: ', self.position, 'BonFire Supply: ', self.supply)
 
-    def arrived(self):
-        """
-        到达过的点
-        """
-        self.isArrived = True
-        
-    def backTrack(self):
-        """
-        搜索失败后进行回溯
-        """
-        self.isArrived = False
-
 
 class Player:
     def __init__(self, startDot, endDot, satiety, comfort):
@@ -84,17 +64,31 @@ class Player:
         :param satiety:饱食度
         :param comfort:舒适度
         """
-        self.route = [startDot, ]
+        self.route = [startDot]
         self.position = startDot.position
         self.x, self.y, self.z = self.position
+        self.startDot = startDot
         self.endDot = endDot
-        self.satiety = satiety
-        self.comfort = comfort
+        self.satiety, self.comfort = satiety, comfort
+        self.initSC = [satiety, comfort]
+
+    def update(self, route_set):
+        '''
+        更新路径信息
+        :param route_set:路径
+        :return:
+        '''
+        self.moveTo(self.startDot)
+        self.route.clear()
+        self.route.append(self.startDot)
+        self.satiety, self.comfort = self.initSC
+        for dot in route_set:
+            self.moveTo(dot)
 
     def moveTo(self, targetDot):
         """
         移动到目标点
-        :param targetDot:
+        :param targetDot:目标点
         :return:
         """
         currentDot = self.route[-1]
@@ -102,90 +96,59 @@ class Player:
         # 到目标点要消耗的SC(饱食度和舒适度)值
         loss = self.scCostCal(targetDot)
         # 更新饱食度和舒适度
-        self.satiety = self.satiety + (not targetDot.isArrived) * targetDot.isFood * targetDot.supply - self.scCostCal(targetDot)
-        self.comfort = self.comfort + (not targetDot.isArrived) * targetDot.isBonfire * targetDot.supply - self.scCostCal(targetDot)
+        self.satiety = self.satiety + targetDot.isFood * targetDot.supply - self.scCostCal(targetDot)
+        self.comfort = self.comfort + targetDot.isBonfire * targetDot.supply - self.scCostCal(targetDot)
         # 将目标点加入路径
         self.route.append(targetDot)
         # 更新玩家位置
         self.position = targetDot.position
         self.x, self.y, self.z = self.position
-        # 将目标点标记为"已到达过"
-        targetDot.arrived()
         # 打印移动过程
-        print('From', currentDot.index, 
-              'to', targetDot.index,
-              currentDot.position, '--->', targetDot.position,
-              'S:', self.satiety,
-              'C:', self.comfort,
-              'Supply:', supply,
-              'Loss:', loss
-              )
-              
-    def back(self):
-        """
-        回溯到上一个点
-        """
-        print('Back')
-        currentDot = self.route[-1]
-        targetDot = self.route[-2]
-        # 到目标点要消耗的SC(饱食度和舒适度)值
-        loss = self.__backCostCal(targetDot)
-        # 更新饱食度和舒适度
-        self.satiety = self.satiety - currentDot.isFood * currentDot.supply + self.__backCostCal(targetDot)
-        self.comfort = self.comfort - currentDot.isBonfire * currentDot.supply + self.__backCostCal(targetDot)
-        # 更新玩家位置
-        self.position = targetDot.position
-        self.x, self.y, self.z = self.position
-        # 将当前点标记为"未到达"
-        currentDot.backTrack()
-        # 更新路径
-        return self.route.pop()       
-        
+        # print('From', currentDot.index, 
+        # 'to', targetDot.index,
+        # currentDot.position, '--->', targetDot.position,
+        # 'S:', self.satiety,
+        # 'C:', self.comfort,
+        # 'Supply:', supply,
+        # 'Loss:', loss
+        # )
+
     def approachable(self, targetDot):
         """
         判断目标点是否能到达
-        :param targetDot:
+        :param targetDot:目标点
         :return:
         """
         scCost = self.scCostCal(targetDot)
-        if (self.satiety - scCost <= -5) or (self.comfort - scCost <= -5):
-            return False
-        elif targetDot == self.endDot:
-            if (self.satiety - scCost <= -3) or (self.comfort - scCost <= -3):
-                return False
-            else:
-                return True
-        # 保守：当目标点导致S\C下降到0以下时就放弃
-        elif (self.satiety - scCost <= -5) or (self.comfort - scCost <= -5):
-            return False
+        if targetDot == self.endDot:
+            return not ((self.satiety - scCost <= -3) or (self.comfort - scCost <= -3))
         else:
-            return True
+            return not ((self.satiety - scCost <= -5) or (self.comfort - scCost <= -5))
+
+    def getApproachableSet(self, dots):
+        """
+        返回当前状态下可到达的点的list
+        :param dots: 所有路径点
+        :return: 可到达路径点
+        """
+        approachable_set = []
+        for dot in dots:
+            if dot in self.route:
+                continue
+            if player1.approachable(dot):
+                approachable_set.append(dot)
+        return approachable_set
 
     def scCostCal(self, targetDot):
         """
         计算到目标点消耗的舒适度和饱食度
-        :param targetDot:
-        :return:
+        :param targetDot:目标点
+        :return:消耗值
         """
         currentDot = self.route[-1]
         if self.z > targetDot.z:
             scCost = euclidDistance(currentDot.position, targetDot.position) * 4 / 100
         elif self.z < targetDot.z:
-            scCost = euclidDistance(currentDot.position, targetDot.position) * 6 / 100
-        else:
-            scCost = euclidDistance(currentDot.position, targetDot.position) * 5 / 100
-        return scCost
-        
-    def __backCostCal(self, targetDot):
-        """
-        计算回溯到目标点恢复的舒适度和饱食度
-        :param targetDot:
-        :return:
-        """
-        currentDot = self.route[-1]
-        if self.z < targetDot.z:
-            scCost = euclidDistance(currentDot.position, targetDot.position) * 4 / 100
-        elif self.z > targetDot.z:
             scCost = euclidDistance(currentDot.position, targetDot.position) * 6 / 100
         else:
             scCost = euclidDistance(currentDot.position, targetDot.position) * 5 / 100
@@ -197,7 +160,16 @@ class Player:
         :return:
         """
         print('Position: ', self.position, 'satiety: ', self.satiety, 'comfort: ', self.comfort, 'step: ',
-              len(self.route))
+              len(self.route) - 1)
+
+    def getInfo(self):
+        """
+        获得当前状态
+        :return: 当前状态
+        """
+        info = 'Position: ' + str(self.position) + ' Satiety: ' + str(self.satiety) + ' Comfort: ' + str(
+            self.comfort) + ' Step: ' + str(len(self.route) - 2)
+        return info
 
     def printRoute(self):
         """
@@ -206,7 +178,8 @@ class Player:
         """
         for i, dot in enumerate(self.route):
             try:
-                print('Step', i, 'From:', self.route[i].index, self.route[i].position, 'to', self.route[i + 1].index,
+                print('Step', i, ': ', self.route[i].index, '--->', self.route[i + 1].index, self.route[i].position,
+                      '--->',
                       self.route[i + 1].position)
             except:
                 return
@@ -224,118 +197,61 @@ class Player:
             z.append(dot.z)
         return x, y, z
 
-def leastDotsStrategy(player, routeDots):
-    """
-    第一问策略：优先找最近的、补给最高的点
-    """
-    """
-    routeDots是地图上所有可选路径点
-    可用函数：
-    player.moveTo(targetDot) # 移动到目标点
-    player.back() # 遇到死路可以回溯
-    player.approachable(targetDot) # 判断目标点是否能够到达
-    player.scCostCal(targetDot) # 返回到目标点消耗的补给值
-    可用属性:
-    player.startDot
-    player.endDot
-    player.satiety
-    player.comfort
-    （不要更改属性值！即不要将属性作为左值赋值！）
-    """
-    # 计算当前可到达的位置
-    approachableDots = []
-    for i, dot in enumerate(routeDots):
-        # 如果能到达终点
-        if (dot == player.endDot) and player.approachable(player.endDot):
-            player.moveTo(dot)
-            return
-        # 舒适度低，优先找篝火点
-        if player.satiety >= player.comfort:
-            if player.approachable(dot) and dot.isBonfire:
-                approachableDots.append(dot)
-        # 舒适度高，优先找食物点
-        if player.satiety < player.comfort:
-            if player.approachable(dot) and dot.isFood:
-                approachableDots.append(dot)
+    def getRouteLength(self):
+        """
+        返回路径长度
+        :return:
+        """
+        length = 0
+        for i, dot in enumerate(self.route):
+            if i < len(self.route) - 1:
+                length += euclidDistance(self.route[i].position, self.route[i + 1].position)
+        return length
 
-    # 计算可到达位置里补给最多的点
-    biggestDots = []
-    maxValue = -float('inf')
-    for i, dot in enumerate(approachableDots):
-        if dot.isArrived == True:
-            continue
-        if dot.supply == 0:
-            continue
-        if dot.supply > maxValue:
-            maxValue = dot.supply
-    for i, dot in enumerate(approachableDots):
-        if dot.isArrived == True:
-            continue
-        if dot.supply == maxValue:
-            biggestDots.append(dot)
 
-    targetDots = []
-    for i, dot in enumerate(biggestDots):
-        if dot.supply > player.scCostCal(dot) - 200:
-            targetDots.append(dot)
+def euclidDistance(currentPos, targetPos):
+    """
+    求两个位置坐标的欧式距离
+    :param currentPos: 当前坐标
+    :param targetPos: 目标坐标
+    :return: 欧氏距离(float)
+    """
+    return np.sqrt(np.sum(np.square(currentPos - targetPos)))
 
-    if len(targetDots) == 0:
-        print('Died')
-        return
+
+def scCostCal(startDot, targetDot):
+    '''
+    求两个点间的饱食度舒适度消耗
+    :param startDot:起点
+    :param targetDot:终点
+    :return:消耗值
+    '''
+    if startDot.z > targetDot.z:
+        scCost = euclidDistance(startDot.position, targetDot.position) * 4 / 100
+    elif startDot.z < targetDot.z:
+        scCost = euclidDistance(startDot.position, targetDot.position) * 6 / 100
     else:
-        targetDot = targetDots[0]
+        scCost = euclidDistance(startDot.position, targetDot.position) * 5 / 100
+    return scCost
 
-    for i, dot in enumerate(biggestDots):
-        if euclidDistance(dot.position, player.position) < euclidDistance(targetDot.position,
-                                                                        player.position):
-        # if euclidDistance(dot.position, player.endDot.position) < euclidDistance(targetDot.position,
-        #                                                                        player.endDot.position):
-            targetDot = dot
 
-    player.moveTo(targetDot)
-    leastDotsStrategy(player, routeDots)
-
-def leastDistanceStrategy(player, routeDots):
-    """
-    第二问策略
-    """
-    pass
-
-def maxSCStrategy(player, routeDots):
-    """
-    第三问策略
-    """
-    pass
-
-    
-if __name__ == "__main__":
-    # Load data
-    data = np.loadtxt('./data.csv', delimiter=',')
-    dots = []
-    for dotData in data:
-        dots.append(Dot(dotData[0], dotData[1:4], dotData[4], dotData[5]))
-
-    player1 = Player(dots[0], dots[-1], 10, 10)
-    leastDotsStrategy(player1, dots)
-
-    '''
-    可视化
-    '''
+def routeVisual(searchResult):
+    # 路径信息：第n条，长度l，路径点
+    n, l, route = searchResult
+    x, y, z = route[0], route[1], route[2]
     # Load data
     dots = np.loadtxt('./data.csv', delimiter=',')
     routeDots = dots[1:-1, :]
     bonfireIndex = [i for i, x in enumerate(routeDots[:, 4].tolist()) if x == 0]
     foodIndex = [i for i, x in enumerate(routeDots[:, 4].tolist()) if x == 1]
-
     startDot = dots[0, :]  # 起点
     endDot = dots[-1, :]  # 终点
     bonfireDots = routeDots[bonfireIndex, :]  # 篝火点
     foodDots = routeDots[foodIndex, :]  # 食物点
-
-    x, y, z = player1.getRoute()
     x1, y1, z1 = bonfireDots[:, 1], bonfireDots[:, 2], bonfireDots[:, 3]
     x2, y2, z2 = foodDots[:, 1], foodDots[:, 2], foodDots[:, 3]
 
+    # 绘图
     fig = plt.figure()
     ax = Axes3D(fig)
     # 图例设置
@@ -358,4 +274,185 @@ if __name__ == "__main__":
     # 添加图例
     ax.legend(loc='best')
 
-    plt.show()
+    line = 'Number: ' + str(n) + ' Step: ' + str(len(route[0]) - 2) + ' Length: ' + str(int(round(l)))
+    plt.title(line)
+    # plt.show()
+    savepath = str(n) + '-' + str(len(route[0]) - 2) + '-' + str(round(l)) + '.svg'
+    fig.savefig(savepath, dpi=600)
+    plt.close()
+
+
+def leastDotsStrategy(player, approachable_set):
+    """
+    第一问策略：
+    使[当前点到终点消耗值 - 目标点到终点消耗值 + 目标点的能量值 - 到目标点消耗的能量]尽可能大且大于0
+    """
+    currentDot = player.route[-1]
+    endDot = player.endDot
+
+    bestDotIndex = None
+    bestDot = None
+    cost = -float('inf')
+    for i, dot in enumerate(approachable_set):
+        if dot == player.endDot:
+            bestDotIndex, bestDot = i, dot
+            break
+        else:
+            tmp = scCostCal(currentDot, endDot) - scCostCal(dot, endDot) + dot.supply - scCostCal(currentDot, dot)
+            if tmp > cost:
+                bestDotIndex, bestDot = i, dot
+                cost = tmp
+    return bestDotIndex, bestDot
+
+
+def leastDistanceStrategy(player, approachable_set):
+    """
+    第二问策略
+    使[目标点到终点距离]尽可能小
+    """
+    endDot = player.endDot
+
+    bestDotIndex = None
+    bestDot = None
+
+    cost = float('inf')
+
+    for i, dot in enumerate(approachable_set):
+        if dot == player.endDot:
+            bestDotIndex, bestDot = i, dot
+            break
+        else:
+            tmp = euclidDistance(dot.position, endDot.position)
+            if tmp < cost:
+                bestDotIndex, bestDot = i, dot
+                cost = tmp
+    return bestDotIndex, bestDot
+
+
+def maxSCStrategy(player, routeDots):
+    """
+    第三问策略
+    """
+    pass
+
+
+def ygjAStar(player, dots, strategy, epoch=50):
+    """
+    改进的A*算法
+    :param player: 玩家
+    :param dots: 路径点
+    :param strategy: 启发式策略
+    :return:
+    """
+    def saveRoute(filename, player, time_cost, loop):
+        """
+        保存路径到txt文件
+        :param filename:
+        :param player:
+        :param time_cost:
+        :param loop:
+        :return:
+        """
+        with open(filename, 'a') as f:
+            f.write(player.getInfo())
+            f.write(' time_cost:' + str(time_cost) + '\n')
+            line = '['
+            for i, dot in enumerate(player.route):
+                line = line + str(dot.index) + ', '
+            line = line + ']\n'
+            f.write(line)
+            for i, dot in enumerate(player.route):
+                try:
+                    line = 'Step' + str(i) + ': ' + str(player.route[i].index) + '--->' + str(
+                        player.route[i + 1].index) + str(player.route[i].position) + '--->' + str(
+                        player.route[i + 1].position)
+                    f.write(line)
+                    f.write('\n')
+                except:
+                    break
+
+    time_start = time.time()
+    res = 0
+    minRouteLength = float('inf')
+
+    # searchResult用于保存搜索的可行路径结果
+    searchResult = []
+    # 初始化open_set, route_set和approachable_set
+    route_set, open_set, approachable_set = [[], [], []]
+    # 将起点加入route_set中
+    route_set.append(dots[0])
+    # 更新当前player状态
+    player.update(route_set)
+    # 更新当前approachable_set，若节点在route_set中，则不加入
+    approachable_set = player.getApproachableSet(dots)
+    # 将approachable_set加入到open_set中
+    open_set.append(approachable_set[:])
+    # 如果open_set不为空
+    while open_set:
+        # 如果open_set[-1]不为空
+        if open_set[-1]:
+            # 从open_set[-1]中根据*启发式*选取优先级最高的点n:
+            i, bestDot = strategy(player, open_set[-1][:])
+            # 如果节点为终点
+            if bestDot == player.endDot:
+                res += 1
+                print(res)
+                # 将节点n从open_set[-1]中删除(open_set[-1].pop())，并加入route_set中
+                route_set.append(open_set[-1].pop(i))
+                # 更新当前player状态
+                player.update(route_set)
+                # 记录route_set(不小于历史最优的路径不予以保存)
+                if True:
+                    minRouteLength = len(route_set) - 1
+                    time_end = time.time()
+                    time_cost = time_end - time_start
+                    filename = './route/' + str(res) + '-' + str(len(route_set) - 1) + '.txt'
+                    saveRoute(filename, player1, time_cost, res)
+                    searchResult.append([res, player.getRouteLength(), player.getRoute()])
+                if res <= epoch:  # 50次搜索
+                    # 进行下一次搜索
+                    route_set.pop()
+                    player.update(route_set)
+                    continue
+                else:
+                    return searchResult
+            # 如果节点n不是终点
+            else:
+                # 将节点n从open_set[-1]中删除(open_set[-1].pop())，并加入route_set中
+                route_set.append(open_set[-1].pop(i))
+                # 更新当前player状态
+                player.update(route_set)
+                # 更新当前approachable_set，若节点在route_set中，则不加入
+                approachable_set.clear()
+                approachable_set = player.getApproachableSet(dots)
+                # 将approachable_set加入到open_set中
+                open_set.append(approachable_set[:])
+        # 如果open_set[-1]为空
+        else:
+            # print('back!')
+            open_set.pop()
+            route_set.pop()
+            player.update(route_set)
+        # 显示部分
+        # i = os.system("cls")
+        # print('-----------------------------')
+        # print(len(open_set))
+        # player.printInfo()
+        # print(len(player.getApproachableSet(dots)))
+        # player.printRoute()
+        # print('-----------------------------')
+
+
+if __name__ == "__main__":
+    # Load data
+    data = np.loadtxt('./data.csv', delimiter=',')
+    dots = []
+    for dotData in data:
+        dots.append(Dot(dotData[0], dotData[1:4], dotData[4], dotData[5]))
+    # Init player
+    player1 = Player(dots[0], dots[-1], 10, 10)
+    # A* Search
+    searchResults = ygjAStar(player1, dots, leastDistanceStrategy, epoch=500)
+    # Visualiation
+    for searchResult in searchResults:
+        routeVisual(searchResult)
